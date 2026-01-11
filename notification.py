@@ -753,7 +753,7 @@ class NotificationService:
             }
         }
         
-        注意：企业微信 Markdown 限制 4096 字符
+        注意：企业微信 Markdown 限制 4096 字节 (Bytes)
         处理策略：如果超长，自动分割成多条发送
         
         Args:
@@ -766,10 +766,13 @@ class NotificationService:
             logger.warning("企业微信 Webhook 未配置，跳过推送")
             return False
         
-        # 长度限制（留出一定余量）
-        MAX_LENGTH = 3500
+        # 长度限制（字节数）
+        # 这里的 4096 是官方限制，为了安全起见，我们使用 2048 字节作为分块目标
+        # 这样即使加上页码等额外信息也不会超标
+        MAX_BYTE_LENGTH = 2000
         
-        if len(content) <= MAX_LENGTH:
+        content_bytes = content.encode('utf-8')
+        if len(content_bytes) <= MAX_BYTE_LENGTH:
             try:
                 return self._send_single_message(content)
             except Exception as e:
@@ -777,64 +780,76 @@ class NotificationService:
                 return False
         
         # 内容过长，进行分割
-        logger.info(f"消息内容超长({len(content)}字符)，将分割成多条发送")
+        logger.info(f"消息内容超长({len(content_bytes)}字节)，将分割成多条发送")
         
-        # 尝试按消息块（---分割线）分割
         chunks = []
-        current_chunk = []
-        current_length = 0
+        current_chunk_lines = []
+        current_chunk_size = 0
         
         lines = content.split('\n')
         
-        # 添加分页标记
-        total_chars = len(content)
-        page_count = (total_chars // MAX_LENGTH) + 1
-        
-        for i, line in enumerate(lines):
-            line_len = len(line) + 1  # +1 for newline
+        for line in lines:
+            # 计算这一行的字节数（加换行符）
+            line_bytes = (line + '\n').encode('utf-8')
+            line_size = len(line_bytes)
             
-            # 如果单行就超过最大长度（极少见），强制切分
-            if line_len > MAX_LENGTH:
+            # 如果单行就超过最大长度（极少见），强制按字节切分
+            if line_size > MAX_BYTE_LENGTH:
                 # 先保存当前块
-                if current_chunk:
-                    chunks.append("\n".join(current_chunk))
-                    current_chunk = []
-                    current_length = 0
+                if current_chunk_lines:
+                    chunks.append("\n".join(current_chunk_lines))
+                    current_chunk_lines = []
+                    current_chunk_size = 0
                 
-                # 强制切分长行
-                for j in range(0, len(line), MAX_LENGTH):
-                    chunks.append(line[j:j+MAX_LENGTH])
+                # 这种情况下，我们需要谨慎切分，避免切坏宽字符
+                # 简单策略：按字符切分（虽然不完美但安全）
+                # 假设平均 3 字节/字符，取 MAX_BYTE_LENGTH / 3 字符
+                char_limit = MAX_BYTE_LENGTH // 4 
+                for j in range(0, len(line), char_limit):
+                    chunks.append(line[j:j+char_limit])
                 continue
             
             # 检查是否会超长
-            if current_length + line_len > MAX_LENGTH:
+            if current_chunk_size + line_size > MAX_BYTE_LENGTH:
                 # 保存当前块
-                chunks.append("\n".join(current_chunk))
-                current_chunk = [line]
-                current_length = line_len
+                chunks.append("\n".join(current_chunk_lines))
+                # 开启新块
+                current_chunk_lines = [line]
+                current_chunk_size = line_size
             else:
-                current_chunk.append(line)
-                current_length += line_len
+                current_chunk_lines.append(line)
+                current_chunk_size += line_size
         
         # 添加最后一个块
-        if current_chunk:
-            chunks.append("\n".join(current_chunk))
+        if current_chunk_lines:
+            chunks.append("\n".join(current_chunk_lines))
         
         # 发送所有块
         success_count = 0
+        total_chunks = len(chunks)
+        
         for i, chunk in enumerate(chunks):
-            # 添加页码标识（除了第一页，或者每页都加）
-            paginated_content = chunk
-            if len(chunks) > 1:
-                paginated_content = f"({i+1}/{len(chunks)})\n{chunk}"
+            # 添加页码标识
+            if total_chunks > 1:
+                paginated_content = f"({i+1}/{total_chunks})\n{chunk}"
+            else:
+                paginated_content = chunk
+            
+            # 再次检查加上页码后是否超长（极小概率）
+            if len(paginated_content.encode('utf-8')) > 4096:
+                logger.warning(f"分块 {i+1} 加上页码后仍超长，尝试截断")
+                paginated_content = paginated_content[:1000] + "\n...(截断)"
             
             try:
                 if self._send_single_message(paginated_content):
                     success_count += 1
+                # 稍微延迟，避免触发频率限制
+                import time
+                time.sleep(0.5)
             except Exception as e:
                 logger.error(f"发送第 {i+1} 条消息失败: {e}")
         
-        return success_count == len(chunks)
+        return success_count == total_chunks
 
     def _send_single_message(self, content: str) -> bool:
         """发送单条消息"""
