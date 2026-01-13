@@ -17,6 +17,7 @@ yfinance>=0.2.0             # Fallback: Yahoo Finance
 # 数据处理
 pandas>=2.0.0               # 数据分析
 numpy>=1.24.0               # 数值计算
+matplotlib>=3.7.0           # 绘图（用于生成图表报告）
 
 # AI 分析
 google-generativeai>=0.8.0  # Gemini API

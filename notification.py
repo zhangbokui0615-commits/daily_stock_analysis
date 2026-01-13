@@ -675,6 +675,14 @@ class NotificationService:
         summary_msg = self.format_wechat_summary(results)
         self.send_to_wechat(summary_msg)
         
+        # 1.5 发送汇总图片表格
+        image_path = self.generate_summary_image(results)
+        if image_path:
+            self.send_image_to_wechat(image_path)
+            # 稍作停顿确保图片先到
+            import time
+            time.sleep(2)
+        
         # 2. 逐个发送个股（按评分从高到低）
         sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
         
@@ -890,11 +898,191 @@ class NotificationService:
                 return True
             else:
                 logger.error(f"企业微信返回错误: {result}")
-                return False
-        else:
-            logger.error(f"企业微信请求失败: {response.status_code} - {response.text}")
             return False
+            
 
+    def generate_summary_image(self, results: List[AnalysisResult]) -> Optional[str]:
+        """
+        生成汇总分析图片
+        
+        Args:
+            results: 分析结果列表
+            
+        Returns:
+            生成的图片路径，如果失败返回 None
+        """
+        try:
+            import matplotlib.pyplot as plt
+            import pandas as pd
+            import os
+            
+            # 设置中文字体（尝试常见的支持中文的字体）
+            plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS', 'WenQuanYi Micro Hei']
+            plt.rcParams['axes.unicode_minus'] = False
+            
+            # 准备数据
+            import re
+            
+            def extract_price(text):
+                """从文本中提取价格数字"""
+                if not text or text == '-':
+                    return '-'
+                # 匹配浮点数或整数
+                match = re.search(r'\d+(\.\d+)?', str(text))
+                return match.group(0) if match else text
+
+            data = []
+            for r in results:
+                # 获取买卖点
+                dashboard = r.dashboard if hasattr(r, 'dashboard') else None
+                battle = dashboard.get('battle_plan', {}) if dashboard else {}
+                sniper = battle.get('sniper_points', {}) if battle else {}
+                
+                # 仅提取价格数字
+                buy_point = extract_price(sniper.get('ideal_buy', '-'))
+                sell_point = extract_price(sniper.get('take_profit', '-'))
+                stop_loss = extract_price(sniper.get('stop_loss', '-'))
+                
+                # 简化建议 (移除Emoji，避免方框乱码，依靠颜色区分)
+                advice = r.operation_advice
+                    
+                data.append({
+                    '代码': r.code,
+                    '名称': r.name,
+                    '评分': r.sentiment_score,
+                    '建议': advice,
+                    '趋势': r.trend_prediction,
+                    '买点': buy_point,
+                    '卖点': sell_point,
+                    '止损': stop_loss
+                })
+            
+            if not data:
+                return None
+            
+            # 创建 DataFrame 并排序
+            df = pd.DataFrame(data)
+            df = df.sort_values('评分', ascending=False)
+            
+            # 绘图 Setup
+            # 计算图片高度：表头+每一行的高度
+            row_height = 0.5
+            header_height = 0.8
+            fig_height = len(df) * row_height + header_height + 1
+            
+            fig, ax = plt.subplots(figsize=(12, fig_height))
+            ax.axis('off')
+            
+            # 标题
+            date_str = datetime.now().strftime('%Y-%m-%d')
+            plt.title(f"A股智能分析汇总 ({date_str})", fontsize=16, pad=20, fontweight='bold', color='#333333')
+            
+            # 绘制表格
+            table = ax.table(
+                cellText=df.values,
+                colLabels=df.columns,
+                cellLoc='center',
+                loc='center',
+                bbox=[0, 0, 1, 1]
+            )
+            
+            # 美化表格
+            table.auto_set_font_size(False)
+            table.set_fontsize(11)
+            
+            # 样式调整
+            for (row, col), cell in table.get_celld().items():
+                cell.set_edgecolor('#cccccc')
+                cell.set_linewidth(0.5)
+                
+                if row == 0:
+                    cell.set_facecolor('#40466e')
+                    cell.set_text_props(color='w', weight='bold')
+                    cell.set_height(0.08)
+                else:
+                    cell.set_height(0.06)
+                    # 根据“建议”列设置背景色 (index 3 is '建议')
+                    if col == 3: 
+                        text = str(df.iloc[row-1]['建议'])
+                        if '买' in text or '增' in text:
+                            cell.set_text_props(color='#2e7d32', weight='bold') # 深绿字
+                            cell.set_facecolor('#e8f5e9') # 浅绿底
+                        elif '卖' in text or '减' in text:
+                            cell.set_text_props(color='#c62828', weight='bold') # 深红字
+                            cell.set_facecolor('#ffebee') # 浅红底
+                        elif '持' in text or '观' in text:
+                            cell.set_text_props(color='#f9a825', weight='bold') # 深黄字
+                            cell.set_facecolor('#fffde7') # 浅黄底
+            
+            # 保存图片
+            image_dir = "reports/images"
+            if not os.path.exists(image_dir):
+                os.makedirs(image_dir)
+            
+            image_path = f"{image_dir}/summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            plt.savefig(image_path, bbox_inches='tight', dpi=150, pad_inches=0.2)
+            plt.close()
+            
+            logger.info(f"汇总图片生成成功: {image_path}")
+            return os.path.abspath(image_path)
+            
+        except Exception as e:
+            logger.error(f"生成汇总图片失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None
+
+    def send_image_to_wechat(self, image_path: str) -> bool:
+        """
+        发送图片到企业微信
+        """
+        if not self.is_available():
+            return False
+            
+        import hashlib
+        import base64
+        
+        try:
+            with open(image_path, 'rb') as f:
+                content = f.read()
+                
+            # 计算 MD5
+            md5 = hashlib.md5(content).hexdigest()
+            
+            # 计算 Base64
+            b64 = base64.b64encode(content).decode('utf-8')
+            
+            payload = {
+                "msgtype": "image",
+                "image": {
+                    "base64": b64,
+                    "md5": md5
+                }
+            }
+            
+            logger.info(f"正在推送图片到企业微信: {image_path}")
+            
+            response = requests.post(
+                self._webhook_url,
+                json=payload,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('errcode') == 0:
+                    logger.info("图片推送成功")
+                    return True
+                else:
+                    logger.error(f"图片推送失败: {result}")
+                    return False
+            else:
+                logger.error(f"请求失败: {response.status_code}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"发送图片异常: {e}")
+            return False
     
     def _send_chunked_messages(self, content: str, max_length: int) -> bool:
         """
