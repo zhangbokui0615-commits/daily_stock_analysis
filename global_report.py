@@ -2,8 +2,8 @@ import yfinance as yf
 import os
 import requests
 import sys
-import concurrent.futures
 import time
+import pandas as pd
 
 # -------------------------------------------------------------------
 # 1. 监控名单
@@ -12,7 +12,7 @@ MARKETS = {
     "🇺🇸美股-纳指": "^IXIC",
     "🇺🇸美股-标普": "^GSPC",
     "🇯🇵日股-日经": "^N225",
-    "🇨🇳中概-金龙": "^HXC",
+    "🇨🇳中概-金龙": "PGJ",
     "💰商品-黄金": "GC=F",
     "🔩商品-铜": "HG=F",    
     "⚪️商品-白银": "SI=F",
@@ -25,125 +25,182 @@ MARKETS = {
 }
 
 # -------------------------------------------------------------------
+# 📊 技术指标计算引擎 (保留 V3.0 的量能+KDJ)
+# -------------------------------------------------------------------
+def calculate_technicals(df):
+    if len(df) < 30: return "数据不足"
+    
+    close = df['Close']
+    high = df['High']
+    low = df['Low']
+    vol = df['Volume']
+    
+    # --- 1. MA 均线 ---
+    ma5 = close.rolling(window=5).mean().iloc[-1]
+    ma20 = close.rolling(window=20).mean().iloc[-1]
+    ma_trend = "🔴多头" if ma5 > ma20 else "💚空头"
+    
+    # --- 2. Volume 量能 ---
+    vol_ma5 = vol.rolling(window=5).mean().iloc[-1]
+    current_vol = vol.iloc[-1]
+    vol_ratio = current_vol / vol_ma5 if vol_ma5 > 0 else 1
+    
+    if vol_ratio > 1.8: vol_msg = "🔥放量"
+    elif vol_ratio < 0.6: vol_msg = "❄️缩量"
+    else: vol_msg = "平量"
+
+    # --- 3. MACD ---
+    exp12 = close.ewm(span=12, adjust=False).mean()
+    exp26 = close.ewm(span=26, adjust=False).mean()
+    macd = exp12 - exp26
+    signal = macd.ewm(span=9, adjust=False).mean()
+    
+    if macd.iloc[-1] > signal.iloc[-1]: macd_msg = "🔴金叉"
+    else: macd_msg = "💚死叉"
+
+    # --- 4. KDJ ---
+    low_min = low.rolling(window=9).min()
+    high_max = high.rolling(window=9).max()
+    rsv = (close - low_min) / (high_max - low_min) * 100
+    df['K'] = rsv.ewm(com=2).mean()
+    df['D'] = df['K'].ewm(com=2).mean()
+    df['J'] = 3 * df['K'] - 2 * df['D']
+    
+    j_val = df['J'].iloc[-1]
+    if j_val > 100: kdj_msg = "⚠️J值超买"
+    elif j_val < 0: kdj_msg = "💎J值超跌"
+    else: kdj_msg = f"J:{int(j_val)}"
+
+    return f"{ma_trend}|{macd_msg}|{vol_msg}|{kdj_msg}"
+
+# -------------------------------------------------------------------
 # 行情快照
 # -------------------------------------------------------------------
 def get_market_data():
-    summary = "🌍 【全球行情快照】\n"
+    summary = "" # 纯数据，不带标题，方便塞入 Prompt
     for name, code in MARKETS.items():
         try:
             ticker = yf.Ticker(code)
-            data = ticker.history(period="5d")
+            data = ticker.history(period="3mo")
             
-            # 数据不足检查
-            if len(data) < 2:
-                summary += f"{name}: ⏳ 数据不足\n"
+            if len(data) < 30:
+                summary += f"{name}: 数据不足\n"
                 continue
                 
             curr = data['Close'].iloc[-1]
-            prev = data['Close'].iloc[-2]
-            pct = ((curr - prev) / prev) * 100
+            pct = ((curr - data['Close'].iloc[-2]) / data['Close'].iloc[-2]) * 100
             
-            # 趋势符号
-            if pct >= 2: trend = "🚀"
-            elif pct > 0: trend = "🔺"
-            elif pct <= -2: trend = "🩸"
-            else: trend = "🔻"
+            # 计算技术指标
+            tech_info = calculate_technicals(data)
             
-            summary += f"{name}: {curr:.2f} ({pct:+.2f}%) {trend}\n"
-        except Exception as e: 
-            summary += f"{name}: ⏳ 暂无数据\n"
+            # A股颜色习惯
+            pct_str = f"+{pct:.2f}%" if pct >= 0 else f"{pct:.2f}%"
+            
+            summary += f"{name}: {curr:.2f} ({pct_str}) [{tech_info}]\n"
+        except: 
+            summary += f"{name}: 暂无数据\n"
     return summary
 
 # -------------------------------------------------------------------
-# 即时新闻
+# 华尔街宏观雷达
 # -------------------------------------------------------------------
 def get_breaking_news():
-    news_summary = "📰 【关联即时情报】\n"
-    target_tickers = ["^IXIC", "GC=F", "601899.SS"] 
+    news_summary = ""
+    macro_tickers = ["^DJI", "^TNX", "DX-Y.NYB", "CL=F"] 
     collected_titles = []
     
-    for code in target_tickers:
+    for code in macro_tickers:
         try:
             ticker = yf.Ticker(code)
             news_list = ticker.news
             if news_list:
-                for item in news_list[:2]:
+                for item in news_list[:1]: # 只取最新一条
                     title = item.get('title', '')
                     if title and title not in collected_titles:
                         collected_titles.append(title)
-                        news_summary += f"• {title}\n"
-        except:
-            continue
+                        label = "美债" if "TNX" in code else ("美元" if "DX-Y" in code else "宏观")
+                        news_summary += f"• [{label}] {title}\n"
+        except: continue
             
-    if not collected_titles:
-        news_summary += "• 暂无重大突发新闻。\n"
+    if not collected_titles: news_summary = "暂无重大宏观突发。"
     return news_summary
 
 # -------------------------------------------------------------------
-# 核心：Gemini 通用请求 (补全了您中断的部分)
+# 🏗️ 构建 Prompt (您的代码)
+# -------------------------------------------------------------------
+def build_gemini_prompt(market_data, news_data):
+    return f"""
+你是一名顶级金融分析 AI，需要在同一份报告中，
+分别模拟【外资QFII】与【A股游资主力】两种视角。
+
+以下是【客观市场数据】，请严格基于数据分析，不要编造事实。
+
+====================
+【全球市场行情与技术结构】
+{market_data}
+
+【关联即时情报】
+{news_data}
+====================
+
+请按以下结构输出，总字数不超过 400 字：
+
+一、【外资 QFII 视角｜全球配置】
+- 判断当前全球风险偏好（Risk-On / Risk-Off）
+- 大宗商品（铜 / 金 / 原油）对中国资源股的传导
+- 对 A 股核心资产的配置态度（加仓 / 观望 / 减仓）
+- 语气：理性、克制、偏中期
+
+二、【A股游资视角｜短线博弈】
+- 判断当前市场情绪（修复 / 分歧 / 退潮）
+- 商品波动是诱多还是趋势
+- 明确点评：
+  • 紫金矿业（追高 / 低吸 / 回避）
+  • 半导体ETF（主升 / 反弹 / 结束）
+  • 大盘方向（偏强 / 震荡 / 偏弱）
+- 语气：偏交易，但不要低俗
+
+最后给出一句【综合结论】：
+“今天更适合 ___（进攻 / 防守 / 观望）型策略。”
+"""
+
+# -------------------------------------------------------------------
+# 🚀 Gemini 请求函数 (您的代码 - 优化版)
 # -------------------------------------------------------------------
 def ask_gemini(prompt, api_key):
-    if not api_key: return "⚠️ 未配置 Google Key"
-    
-    # 轮询两个模型，增加成功率
-    models = ["models/gemini-1.5-flash", "models/gemini-pro"]
-    headers = {'Content-Type': 'application/json'}
-    
-    for model in models:
-        url = f"https://generativelanguage.googleapis.com/v1beta/{model}:generateContent?key={api_key}"
+    if not api_key:
+        return "⚠️ 未配置 GEMINI_API_KEY"
+
+    # 使用 1.5-pro 模型，逻辑更强
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/"
+        "models/gemini-1.5-pro:generateContent"
+        f"?key={api_key}"
+    )
+
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "contents": [
+            {"parts": [{"text": prompt}]}
+        ]
+    }
+
+    # 重试机制
+    for retry in range(3):
         try:
-            res = requests.post(url, headers=headers, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=20)
-            
+            res = requests.post(url, headers=headers, json=payload, timeout=30)
             if res.status_code == 200:
-                return res.json()['candidates'][0]['content']['parts'][0]['text']
-            elif res.status_code == 429: # 如果拥堵
-                time.sleep(5) # 休息5秒
-                continue # 换个模型再试
-            elif res.status_code == 404:
-                continue 
+                return res.json()["candidates"][0]["content"]["parts"][0]["text"]
+            elif res.status_code == 429:
+                # 遇到拥堵，递增等待时间
+                time.sleep(6 + retry * 3)
             else:
-                # 打印错误但不崩溃，尝试下一个
-                print(f"Model {model} error: {res.status_code}")
-                continue
+                print(f"Gemini Error {res.status_code}: {res.text}")
         except Exception as e:
-            print(f"Connection error: {e}")
-            continue
-            
-    return "⚠️ Gemini 暂时太累了，请稍后自动重试。"
+            print(f"Connection Error: {e}")
+            time.sleep(5)
 
-# -------------------------------------------------------------------
-# 🎭 角色 A: QFII 外资 (理性派)
-# -------------------------------------------------------------------
-def role_qfii(market_data, news_data, api_key):
-    prompt = f"""
-    【角色设定】：你是一位掌管百亿美金的华尔街QFII基金经理，理性、冷静、看重宏观数据。
-    【数据】：{market_data}
-    【新闻】：{news_data}
-    
-    请输出《全球宏观备忘录》（300字内）：
-    1. ⚠️ **全球情报**：投行喊单与地缘风险。
-    2. 🌍 **宏观传导**：铜金油波动对【紫金矿业】估值的影响。
-    3. 🇨🇳 **A股态度**：站在全球配置角度，今天是买入中国核心资产的机会，还是撤退？
-    """
-    return ask_gemini(prompt, api_key)
-
-# -------------------------------------------------------------------
-# 🎭 角色 B: A股游资 (激进派) - 由 Gemini 扮演
-# -------------------------------------------------------------------
-def role_tycoon(market_data, news_data, api_key):
-    prompt = f"""
-    【角色设定】：你是一位A股实战派游资大佬，犀利、短线、懂情绪、只会说大白话。
-    【数据】：{market_data}
-    【新闻】：{news_data}
-    
-    请输出《主力操盘指令》（200字内）：
-    1. 🕵️ **主力意图**：大宗商品的波动，是主力的诱多陷阱还是真突破？
-    2. ⚡️ **个股指令**：
-       - 【紫金矿业】：当前位置追高、低吸还是止盈？
-       - 【半导体ETF】：是主升浪还是反弹结束？
-       - 【大盘】：看涨还是看跌？
-    """
-    return ask_gemini(prompt, api_key)
+    return "⚠️ Gemini 当前负载较高，建议稍后重试。"
 
 # -------------------------------------------------------------------
 # 主程序
@@ -152,45 +209,35 @@ def main():
     gemini_key = os.getenv("GEMINI_API_KEY") 
     push_token = os.getenv("PUSHPLUS_TOKEN")
     
-    print("📡 扫描行情...")
+    print("📡 1. 获取行情与技术指标...")
     market_data = get_market_data()
+    
+    print("📰 2. 获取华尔街新闻...")
     news_data = get_breaking_news()
     
-    print("🧠 Gemini 正在左右互搏 (影分身模式)...")
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        # 同时启动两个任务，都用 Gemini Key，但是 Prompt 不同
-        future_qfii = executor.submit(role_qfii, market_data, news_data, gemini_key)
-        
-        # 稍微错开一点时间，防止瞬间并发太高
-        time.sleep(2) 
-        
-        future_tycoon = executor.submit(role_tycoon, market_data, news_data, gemini_key)
-        
-        report_qfii = future_qfii.result()
-        report_tycoon = future_tycoon.result()
+    print("🧠 3. Gemini 深度思考中 (QFII vs 游资)...")
+    prompt = build_gemini_prompt(market_data, news_data)
+    analysis_report = ask_gemini(prompt, gemini_key)
 
+    # 组合最终报告
     final_report = f"""
 {market_data}
-
+------------------
 {news_data}
 
-🤖 **【QFII外资视角】Google Gemini**
-{report_qfii}
-
-🐲 **【游资主力视角】Gemini (分身)**
-{report_tycoon}
+{analysis_report}
     """
 
-    # 推送逻辑
+    # 推送
     try:
         requests.post("http://www.pushplus.plus/send", json={
             "token": push_token,
-            "title": "⚖️ A股多空辩论 (Gemini独奏版)",
+            "title": "⚖️ A股双核深度复盘 (V4.0)",
             "content": final_report
         })
-        print("推送完成。")
+        print("✅ 推送完成。")
     except Exception as e:
-        print(f"推送失败: {e}")
+        print(f"❌ 推送失败: {e}")
         
     sys.exit(0)
 
