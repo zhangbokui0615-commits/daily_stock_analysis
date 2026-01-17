@@ -2,6 +2,7 @@ import yfinance as yf
 import os
 import requests
 import sys
+import json
 
 # 1. 监控名单
 MARKETS = {
@@ -23,34 +24,39 @@ def get_market_data():
         except: summary += f"· {name}: 获取失败\n"
     return summary
 
+def call_gemini(api_key, market_data):
+    # 尝试多种可能的 API 路径
+    endpoints = [
+        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}",
+        f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={api_key}"
+    ]
+    
+    payload = {
+        "contents": [{"parts": [{"text": f"你是一位资深财经分析师。请针对以下数据进行深度解读，字数不少于400字，分段清晰，给A股投资者具体建议：\n{market_data}"}]}]
+    }
+    
+    for url in endpoints:
+        try:
+            response = requests.post(url, json=payload, timeout=30)
+            res_json = response.json()
+            if 'candidates' in res_json:
+                return res_json['candidates'][0]['content']['parts'][0]['text']
+        except:
+            continue
+    return f"AI 深度研报生成失败。原始响应: {response.text[:200] if 'response' in locals() else '网络连接错误'}"
+
 def main():
     api_key = os.getenv("GEMINI_API_KEY")
     push_token = os.getenv("PUSHPLUS_TOKEN")
+    
+    if not api_key:
+        print("未检测到 API 密钥")
+        sys.exit(1)
+        
     market_data = get_market_data()
-    
-    # 2. 核心修正：使用完整的模型路径，彻底解决 404 错误
-    # 注意：路径中加入了 publishers/google/
-    url = f"https://generativelanguage.googleapis.com/v1beta/publishers/google/models/gemini-1.5-flash:generateContent?key={api_key}"
-    
-    headers = {'Content-Type': 'application/json'}
-    payload = {
-        "contents": [{
-            "parts": [{
-                "text": f"你是一位资深财经分析师。请针对以下数据进行深度解读，字数不少于400字，分段清晰，给A股投资者具体建议：\n{market_data}"
-            }]
-        }]
-    }
-    
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
-        res_json = response.json()
-        # 提取 AI 内容
-        ai_report = res_json['candidates'][0]['content']['parts'][0]['text']
-    except Exception as e:
-        # 如果还是不行，显示具体的报错，方便我们排查
-        ai_report = f"⚠️ AI 深度研报生成失败。返回信息: {response.text[:200] if 'response' in locals() else str(e)}"
+    ai_report = call_gemini(api_key, market_data)
 
-    # 3. 推送微信
+    # 推送至微信
     requests.post("http://www.pushplus.plus/send", json={
         "token": push_token,
         "title": "🌍 全球财经早报 (AI 深度版)",
