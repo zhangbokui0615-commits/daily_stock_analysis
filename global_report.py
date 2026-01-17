@@ -3,7 +3,7 @@ import os
 import requests
 import sys
 
-# 1. 您的自选监控名单
+# 1. 自选股名单
 MARKETS = {
     "纳斯达克": "^IXIC", "上证指数": "000001.SS",
     "特变电工": "600089.SS", "中国核电": "601985.SS",
@@ -23,8 +23,28 @@ def get_market_data():
         except: summary += f"· {name}: 暂时无法获取\n"
     return summary
 
+# 🔥 新增功能：自动查找可用的模型
+def find_working_model(api_key):
+    # 问 Google：我的 Key 能用哪些模型？
+    list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+    try:
+        resp = requests.get(list_url, timeout=10)
+        if resp.status_code == 200:
+            models = resp.json().get('models', [])
+            # 优先找 Flash 或 Pro，找到了就返回它的准确名字
+            for m in models:
+                name = m['name'] # 格式如 "models/gemini-1.5-flash-001"
+                if 'generateContent' in m.get('supportedGenerationMethods', []):
+                    if 'flash' in name: return name
+                    if 'pro' in name: return name
+            # 如果没找到偏好的，就返回第一个能用的
+            if models: return models[0]['name']
+    except:
+        pass
+    # 如果实在问不到，才使用保底的默认值
+    return "models/gemini-1.5-flash"
+
 def main():
-    # 读取您刚才已经更新好的 新 Key，不用动 Secrets
     api_key = os.getenv("GEMINI_API_KEY") 
     push_token = os.getenv("PUSHPLUS_TOKEN")
     
@@ -34,12 +54,13 @@ def main():
 
     market_data = get_market_data()
     
-    # -------------------------------------------------------
-    # 🔄 核心修正：改回 'gemini-pro'
-    # 之前的 404 是因为 Flash 模型在新号上没激活
-    # Pro 模型是 Google 的“基石”，新号默认一定有权限！
-    # -------------------------------------------------------
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
+    # 1. 先自动寻找正确的模型名字
+    model_name = find_working_model(api_key)
+    print(f"🤖 自动匹配到的模型: {model_name}")
+    
+    # 2. 使用匹配到的名字去请求
+    # 注意：model_name 已经包含了 'models/' 前缀，所以 URL 里不需要再写
+    url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={api_key}"
     
     headers = {'Content-Type': 'application/json'}
     payload = {
@@ -64,7 +85,8 @@ def main():
         if response.status_code == 200:
             ai_report = response.json()['candidates'][0]['content']['parts'][0]['text']
         else:
-            ai_report = f"⚠️ AI 分析异常 (状态码 {response.status_code})。错误信息: {response.text}"
+            # 如果还是不行，把从"问路"到"请求"的所有信息都打印出来调试
+            ai_report = f"⚠️ 自动匹配模型 ({model_name}) 依然失败。\n状态码: {response.status_code}\n错误: {response.text[:100]}"
     except Exception as e:
         ai_report = f"网络请求失败: {str(e)}"
 
