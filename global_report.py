@@ -1,11 +1,10 @@
 import yfinance as yf
 import os
 import google.generativeai as genai
-from google.generativeai.types import RequestOptions
 import requests
 import sys
 
-# 1. 配置全球观察名单
+# 1. 监控名单
 MARKETS = {
     "美股-纳斯达克": "^IXIC",
     "美股-标普500": "^GSPC",
@@ -33,40 +32,29 @@ def main():
     push_token = os.getenv("PUSHPLUS_TOKEN")
     market_data = get_market_data()
     
-    # 2. 核心修正：使用 RequestOptions 强制指定 API 版本
+    # 2. 极简 AI 调用：解决 404 和版本参数冲突
     try:
         genai.configure(api_key=api_key)
         
-        # 强制使用 v1 版本接口，解决 v1beta 下的 404 问题
+        # 使用最基础、兼容性最强的模型名称
         model = genai.GenerativeModel('gemini-1.5-flash')
         
-        prompt = f"""
-        你是一位资深财经分析师。请针对以下数据进行深度解读：
-        {market_data}
-        要求：
-        1. 详细分析市场走势逻辑。
-        2. 给中国投资者提供今日 A 股的操作策略。
-        3. 总字数不少于 400 字，增加信息含金量。
-        """
+        prompt = f"你是一位资深财经分析师。请针对以下数据进行深度解读：\n{market_data}\n要求：\n1. 详细分析市场走势逻辑。\n2. 给中国投资者提供今日 A 股的操作策略。\n3. 总字数不少于 400 字，增加信息量。"
         
-        # 使用 request_options 强制兼容性
-        response = model.generate_content(
-            prompt, 
-            request_options=RequestOptions(api_version='v1')
-        )
+        # 移除所有额外的参数，仅保留最核心的调用
+        response = model.generate_content(prompt)
         ai_report = response.text
     except Exception as e:
-        ai_report = f"⚠️ AI 分析触发了版本兼容性保护，请手动检查。错误: {str(e)}"
+        ai_report = f"⚠️ AI 分析暂时不可用。错误详情: {str(e)}"
 
-    # 3. 推送
+    # 3. 稳定推送
     requests.post("http://www.pushplus.plus/send", json={
         "token": push_token,
         "title": "🌍 全球财经早报 (AI 深度版)",
         "content": f"{market_data}\n\n🔍 【AI 深度策略研报】\n{ai_report}"
     })
     
-    # 强制结束，防止 GitHub Actions “一直跑”
-    print("任务已完成。")
+    # 强制结束，防止 Actions 一直跑
     sys.exit(0)
 
 if __name__ == "__main__":
