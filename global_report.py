@@ -28,8 +28,10 @@ def main():
     push_token = os.getenv("PUSHPLUS_TOKEN")
     market_data = get_market_data()
     
-    # 2. 核心修正：直接使用 API 链接，不再使用报错的库
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    # 2. 核心修正：使用完整的模型路径，彻底解决 404 错误
+    # 注意：路径中加入了 publishers/google/
+    url = f"https://generativelanguage.googleapis.com/v1beta/publishers/google/models/gemini-1.5-flash:generateContent?key={api_key}"
+    
     headers = {'Content-Type': 'application/json'}
     payload = {
         "contents": [{
@@ -42,10 +44,11 @@ def main():
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=30)
         res_json = response.json()
-        # 提取 AI 回复内容
+        # 提取 AI 内容
         ai_report = res_json['candidates'][0]['content']['parts'][0]['text']
     except Exception as e:
-        ai_report = f"⚠️ AI 深度研报生成失败。详细日志: {str(response.text if 'response' in locals() else e)}"
+        # 如果还是不行，显示具体的报错，方便我们排查
+        ai_report = f"⚠️ AI 深度研报生成失败。返回信息: {response.text[:200] if 'response' in locals() else str(e)}"
 
     # 3. 推送微信
     requests.post("http://www.pushplus.plus/send", json={
