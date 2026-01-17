@@ -2,10 +2,8 @@ name: A股全球双核分析
 
 on:
   schedule:
-    # ⏰ 这里改成了 UTC 1:00，对应北京时间 09:00
-    # 1-5 代表周一到周五
-    - cron: '0 1 * * 1-5'
-  workflow_dispatch:      # 允许手动点击按钮运行
+    - cron: '0 1 * * 1-5'  # 北京时间 09:00 (UTC 01:00)
+  workflow_dispatch:      # 允许手动运行
 
 jobs:
   build:
@@ -18,7 +16,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v2
       with:
-        python-version: '3.9'
+        python-version: '3.11'  # 👈 核心修改：升级到了 3.11，完美兼容新版库
 
     - name: Install dependencies
       run: |
@@ -27,7 +25,6 @@ jobs:
 
     - name: Run Analysis
       env: 
-        # 👇 关键修复：显式地把 DeepSeek 密钥传给脚本
         DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
