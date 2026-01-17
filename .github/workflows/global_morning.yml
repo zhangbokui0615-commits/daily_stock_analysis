@@ -20,17 +20,17 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'  # ⚠️ 必须 3.11+ 以兼容 yfinance
+          python-version: '3.11'  # 保持 3.11 以兼容最新版 yfinance
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install yfinance requests
+          # 💡 补全了脚本运行必须的 pandas 和 pytz
+          pip install yfinance requests pandas pytz
 
-      # 👇 您刚才断在这里了，下面是补全的部分
       - name: Run Global Market Analysis
         env: 
-          # 🔑 把 Secrets 里的钥匙传给 Python 脚本
+          # 🔑 确保 GitHub Secrets 中已配置这两个变量
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
-        run: python global_report.py
+        run: python global_report.py  # ⚠️ 请确保您的 Python 文件名确实是这个
