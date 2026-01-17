@@ -23,7 +23,7 @@ def get_market_data():
                 change = ((curr - prev) / prev) * 100
                 summary += f"· {name}: {curr:.2f} ({'+' if change>0 else ''}{change:.2f}%)\n"
         except:
-            summary += f"· {name}: 数据获取失败\n"
+            summary += f"· {name}: 获取失败\n"
     return summary
 
 def analyze_and_push():
@@ -36,13 +36,11 @@ def analyze_and_push():
     try:
         genai.configure(api_key=gemini_key)
         
-        # 核心修正：使用 v1 版本最兼容的旧版模型标识符
-        # 针对 404 错误，尝试使用不带 -latest 的版本
+        # 核心修正：使用 v1 版本最兼容的模型标识符
         model = genai.GenerativeModel('gemini-1.5-flash')
         
         prompt = f"你是一个资深财经分析师。请根据以下全球市场数据进行深度点评：\n{market_data}\n要求：1. 详细总结市场情绪。2. 分析其对中国A股的潜在影响。3. 提供具体的投资建议。总字数在300-400字左右，增加信息量。"
         
-        # 强制指定版本可能解决 404 问题
         response = model.generate_content(prompt)
         ai_report = response.text
     except Exception as e:
