@@ -1,0 +1,28 @@
+name: 全球财经早报推送
+
+on:
+  schedule:
+    # 每天北京时间 09:00 自动运行 (对应 UTC 01:00)
+    - cron: '0 1 * * 1-5'
+  workflow_dispatch: # 允许你随时手动点击运行
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检查代码
+        uses: actions/checkout@v3
+
+      - name: 设置 Python 环境
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: 安装必要库 (yfinance等)
+        run: pip install yfinance google-generativeai requests
+
+      - name: 执行全球分析并推送微信
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+        run: python global_report.py
