@@ -67,7 +67,7 @@ def get_breaking_news():
         news_summary += "• 暂无重大突发新闻。\n"
     return news_summary
 
-# 4. 🔥 核心修复：独立且稳健的模型查找函数
+# 4. 🔥 核心修复：独立且稳健的模型查找函数 (救命稻草)
 def find_working_model(api_key):
     list_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
     try:
@@ -95,7 +95,7 @@ def find_working_model(api_key):
 def call_gemini(market_data, news_data, api_key):
     if not api_key: return "⚠️ 未配置 Google Key"
     
-    # 1. 先找到正确的模型名字
+    # 1. 先找到正确的模型名字 (调用上面的救命函数)
     model_name = find_working_model(api_key)
     
     url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={api_key}"
@@ -125,4 +125,84 @@ def call_gemini(market_data, news_data, api_key):
             return f"🚫 Google 拒绝服务 (代码 {res.status_code}): {res.text[:100]}"
             
         return res.json()['candidates'][0]['content']['parts'][0]['text']
-    except Exception
+    except Exception as e: 
+        return f"Gemini 思考中断: {str(e)}"
+
+# -------------------------------------------------------------------
+# 🐲 角色 B: DeepSeek (A股 游资视角)
+# -------------------------------------------------------------------
+def call_deepseek(market_data, news_data, api_key):
+    if not api_key: return "⚠️ (提示：请配置 DEEPSEEK_API_KEY 以解锁内资视角)"
+    
+    url = "https://api.deepseek.com/chat/completions"
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+    
+    prompt = f"""
+    你是A股游资大佬，擅长短线博弈。
+    【行情】：{market_data}
+    【消息】：{news_data}
+    
+    请给出犀利指令（200字内）：
+    1. 🕵️ **主力意图**：
+       - 主力会利用外围消息诱多还是洗盘？
+    2. ⚡️ **实操指令**：
+       - 【紫金矿业】：追高、低吸还是止盈？
+       - 【半导体ETF】：主升浪还是反弹结束？
+       - 【A股大盘】：看涨还是看跌？
+    """
+    try:
+        payload = {
+            "model": "deepseek-chat",
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False
+        }
+        res = requests.post(url, headers=headers, json=payload, timeout=20)
+        
+        if res.status_code != 200:
+             return f"🚫 DeepSeek 拒绝服务: {res.text[:50]}"
+             
+        return res.json()['choices'][0]['message']['content']
+    except Exception as e: return f"DeepSeek 思考中断: {str(e)}"
+
+# -------------------------------------------------------------------
+# 主程序
+# -------------------------------------------------------------------
+def main():
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    deepseek_key = os.getenv("DEEPSEEK_API_KEY")
+    push_token = os.getenv("PUSHPLUS_TOKEN")
+    
+    print("📡 扫描行情...")
+    market_data = get_market_data()
+    news_data = get_breaking_news()
+    
+    print("🧠 AI 双核辩论中...")
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future_gemini = executor.submit(call_gemini, market_data, news_data, gemini_key)
+        future_deepseek = executor.submit(call_deepseek, market_data, news_data, deepseek_key)
+        
+        report_gemini = future_gemini.result()
+        report_deepseek = future_deepseek.result()
+
+    final_report = f"""
+{market_data}
+
+{news_data}
+
+🤖 **【QFII外资视角】Google Gemini**
+{report_gemini}
+
+🐲 **【游资主力视角】DeepSeek**
+{report_deepseek}
+    """
+
+    requests.post("http://www.pushplus.plus/send", json={
+        "token": push_token,
+        "title": "⚖️ A股多空辩论 (修复版)",
+        "content": final_report
+    })
+    print("推送完成。")
+    sys.exit(0)
+
+if __name__ == "__main__":
+    main()
