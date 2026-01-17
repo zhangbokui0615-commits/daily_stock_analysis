@@ -3,7 +3,7 @@ import os
 import google.generativeai as genai
 import requests
 
-# 1. 监控的全球重点市场
+# 1. 监控市场列表
 MARKETS = {
     "美股-纳斯达克": "^IXIC",
     "美股-标普500": "^GSPC",
@@ -12,46 +12,39 @@ MARKETS = {
     "汇率-美元/日元": "JPY=X"
 }
 
-def get_market_summary():
-    data_str = "【全球市场实时数据】\n"
-    for name, ticker_code in MARKETS.items():
+def get_market_data():
+    summary = "【全球市场实时数据】\n"
+    for name, code in MARKETS.items():
         try:
-            ticker = yf.Ticker(ticker_code)
-            hist = ticker.history(period="2d")
-            if len(hist) >= 2:
-                current = hist['Close'].iloc[-1]
-                prev = hist['Close'].iloc[-2]
-                pct = ((current - prev) / prev) * 100
-                data_str += f"· {name}: {current:.2f} ({'+' if pct>0 else ''}{pct:.2f}%)\n"
-        except:
-            data_str += f"· {name}: 获取失败\n"
-    return data_str
+            ticker = yf.Ticker(code)
+            data = ticker.history(period="2d")
+            if len(data) >= 2:
+                curr, prev = data['Close'].iloc[-1], data['Close'].iloc[-2]
+                pct = ((curr - prev) / prev) * 100
+                summary += f"· {name}: {curr:.2f} ({'+' if pct>0 else ''}{pct:.2f}%)\n"
+        except: summary += f"· {name}: 获取失败\n"
+    return summary
 
 def main():
-    # 读取配置
+    # 获取环境变量
     api_key = os.getenv("GEMINI_API_KEY")
     push_token = os.getenv("PUSHPLUS_TOKEN")
     
-    # 抓取数据
-    summary_data = get_market_summary()
-    
-    # AI 深度分析
+    # 获取数据并调用 AI
+    data_text = get_market_data()
     try:
         genai.configure(api_key=api_key)
-        # 修正模型名称，彻底解决 NotFound 报错
+        # 统一使用 gemini-1.5-flash
         model = genai.GenerativeModel('gemini-1.5-flash')
-        prompt = f"你是一位资深美股与全球宏观分析师。请针对以下数据进行点评，并为中国投资者提供今日操作建议（200字以内）：\n{summary_data}"
-        response = model.generate_content(prompt)
-        ai_analysis = response.text
+        report = model.generate_content(f"简评以下财经数据并给中国投资者一句建议：\n{data_text}").text
     except Exception as e:
-        ai_analysis = f"AI 分析暂时离线（错误：{str(e)}）"
+        report = f"AI分析暂时离线: {str(e)}"
 
-    # 推送至微信
-    full_content = f"{summary_data}\n\n【AI 策略视角】\n{ai_analysis}"
+    # 发送推送
     requests.post("http://www.pushplus.plus/send", json={
         "token": push_token,
-        "title": "🌍 全球市场早报（AI版）",
-        "content": full_content
+        "title": "🌍 全球财经早报 (修正版)",
+        "content": f"{data_text}\n\n【AI深度解读】\n{report}"
     })
 
 if __name__ == "__main__":
