@@ -3,7 +3,7 @@ import os
 import google.generativeai as genai
 import requests
 
-# 1. 配置全球观察名单
+# 1. 监控全球重点市场（你可以根据需要增删代码）
 MARKETS = {
     "美股-纳斯达克": "^IXIC",
     "美股-标普500": "^GSPC",
@@ -13,50 +13,51 @@ MARKETS = {
 }
 
 def get_market_data():
-    summary = "【全球市场最新数据快报】\n"
+    summary = "📊 【全球市场实时数据快报】\n"
     for name, code in MARKETS.items():
         try:
             ticker = yf.Ticker(code)
             data = ticker.history(period="2d")
             if len(data) >= 2:
                 curr, prev = data['Close'].iloc[-1], data['Close'].iloc[-2]
-                change = ((curr - prev) / prev) * 100
-                summary += f"· {name}: {curr:.2f} ({'+' if change>0 else ''}{change:.2f}%)\n"
+                pct = ((curr - prev) / prev) * 100
+                summary += f"· {name}: {curr:.2f} ({'+' if pct>0 else ''}{pct:.2f}%)\n"
         except:
             summary += f"· {name}: 获取失败\n"
     return summary
 
-def analyze_and_push():
-    gemini_key = os.getenv("GEMINI_API_KEY")
+def main():
+    api_key = os.getenv("GEMINI_API_KEY")
     push_token = os.getenv("PUSHPLUS_TOKEN")
-    
     market_data = get_market_data()
     
-    # 2. AI 深度分析
     try:
-        genai.configure(api_key=gemini_key)
-        
-        # 核心修正：使用 v1 版本最兼容的模型标识符
+        genai.configure(api_key=api_key)
+        # 修正模型名称，确保 AI 正常响应
         model = genai.GenerativeModel('gemini-1.5-flash')
         
-        prompt = f"你是一个资深财经分析师。请根据以下全球市场数据进行深度点评：\n{market_data}\n要求：1. 详细总结市场情绪。2. 分析其对中国A股的潜在影响。3. 提供具体的投资建议。总字数在300-400字左右，增加信息量。"
-        
+        # 强化 Prompt 指令，要求 AI 增加信息量
+        prompt = f"""
+        你是一位资深全球宏观策略分析师。请针对以下最新的市场数据：
+        {market_data}
+        进行深度解读，要求：
+        1. 总结昨晚美股和今早日股的走势逻辑。
+        2. 分析这些波动对中国投资者（A股/港股）的潜在影响。
+        3. 提供具体的投资建议或避险提示。
+        4. 字数控制在400字左右，分段输出，保持专业且易懂。
+        """
         response = model.generate_content(prompt)
-        ai_report = response.text
+        ai_analysis = response.text
     except Exception as e:
-        # 如果还是不行，尝试备选模型
-        try:
-            model = genai.GenerativeModel('gemini-pro')
-            ai_report = model.generate_content(prompt).text
-        except:
-            ai_report = f"AI 分析暂时不可用: {str(e)}"
+        ai_analysis = f"⚠️ AI 深度解读暂时不可用，错误原因：{str(e)}"
 
-    content = f"{market_data}\n\n【AI 深度研报】\n{ai_report}"
+    # 发送推送
+    full_content = f"{market_data}\n\n🔍 【AI 深度策略研报】\n{ai_analysis}"
     requests.post("http://www.pushplus.plus/send", json={
         "token": push_token,
-        "title": "🌍 全球财经早报 (AI深度版)",
-        "content": content
+        "title": "🌍 全球财经早报（深度版）",
+        "content": full_content
     })
 
 if __name__ == "__main__":
-    analyze_and_push()
+    main()
