@@ -24,9 +24,21 @@ def get_market_data():
     return summary
 
 def main():
-    # ✅ 修正点：这里必须写变量名 "GEMINI_API_KEY"，不能写具体的密钥！
+    # ✅ 修正点：这里必须填变量名 "GEMINI_API_KEY"，不能直接填密钥！
     api_key = os.getenv("GEMINI_API_KEY") 
     push_token = os.getenv("PUSHPLUS_TOKEN")
+    
+    # 打印调试信息（不会泄露Key，但能知道有没有读到）
+    if not api_key:
+        print("❌ 严重错误：未读取到 API Key，请检查 Secrets 设置！")
+        # 发送报错通知给微信，方便您排查
+        requests.post("http://www.pushplus.plus/send", json={
+            "token": push_token,
+            "title": "❌ 脚本配置错误",
+            "content": "无法读取到 GEMINI_API_KEY，请检查代码第 27 行是否为 os.getenv('GEMINI_API_KEY')"
+        })
+        sys.exit(1)
+
     market_data = get_market_data()
     
     # 使用 v1beta 接口
@@ -55,7 +67,7 @@ def main():
         if response.status_code == 200:
             ai_report = response.json()['candidates'][0]['content']['parts'][0]['text']
         else:
-            ai_report = f"AI 分析返回异常 (状态码 {response.status_code})。请检查 Secrets 中的 Key 是否正确。"
+            ai_report = f"AI 分析返回异常 (状态码 {response.status_code})。请检查 Secrets 中的 Key 是否有效。"
     except Exception as e:
         ai_report = f"网络请求失败: {str(e)}"
 
