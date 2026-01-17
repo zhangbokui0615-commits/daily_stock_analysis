@@ -3,7 +3,7 @@ import os
 import requests
 import sys
 
-# 1. 精选监控名单 (包含您关注的 A 股及全球指数)
+# 1. 您的自选监控名单
 MARKETS = {
     "纳斯达克": "^IXIC", "上证指数": "000001.SS",
     "特变电工": "600089.SS", "中国核电": "601985.SS",
@@ -11,7 +11,7 @@ MARKETS = {
 }
 
 def get_market_data():
-    summary = "📊 【全球及自选股实时快报】\n"
+    summary = "📊 【自选股实时快报】\n"
     for name, code in MARKETS.items():
         try:
             ticker = yf.Ticker(code)
@@ -20,36 +20,52 @@ def get_market_data():
                 curr, prev = data['Close'].iloc[-1], data['Close'].iloc[-2]
                 pct = ((curr - prev) / prev) * 100
                 summary += f"· {name}: {curr:.2f} ({'+' if pct>0 else ''}{pct:.2f}%)\n"
-        except: summary += f"· {name}: 抓取失败\n"
+        except: summary += f"· {name}: 暂时无法获取\n"
     return summary
 
 def main():
+    # ✅ 修正点：这里必须写变量名 "GEMINI_API_KEY"，不能写具体的密钥！
+    api_key = os.getenv("GEMINI_API_KEY") 
     push_token = os.getenv("PUSHPLUS_TOKEN")
     market_data = get_market_data()
     
-    # 核心修正：切换到高稳定性的公共 AI 接口，避开 Google 404 账号限制
-    # 增加字数要求，确保信息量充实
-    prompt = f"你是一位资深财经策略师。请针对以下最新的市场与自选股数据进行深度解读：\n{market_data}\n要求：1. 详细分析走势。2. 给出今日买卖策略建议。3. 总字数在500字左右。"
+    # 使用 v1beta 接口
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    
+    headers = {'Content-Type': 'application/json'}
+    payload = {
+        "contents": [{
+            "parts": [{
+                "text": f"""
+                你是一位 A 股资深操盘手。请分析以下最新数据：
+                {market_data}
+                
+                请输出一份实战复盘，要求：
+                1. 分析【特变电工】和【中国核电】的今日走势。
+                2. 结合纳指和汇率判断外部环境。
+                3. 给出明确的【持股/减仓/抄底】建议。
+                4. 字数 400 字左右，风格犀利。
+                """
+            }]
+        }]
+    }
     
     try:
-        # 使用备选的稳定 AI 转发接口
-        response = requests.post(
-            "https://api.duckduckgo.com/tiv/v1", # 使用 DuckDuckGo 免费 AI 转发
-            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": prompt}]},
-            timeout=30
-        )
-        # 这里模拟一个稳定的返回逻辑，确保您能收到分析
-        ai_report = "【AI 深度研报】\n当前市场整体情绪偏向观望。美股纳指小幅波动，对国内科技板块有压制作用。您关注的中国核电与特变电工在缩量回踩，建议关注 5 日均线支撑。若不破位可继续持有，若放量跌破则需分批减仓止损。"
-    except:
-        ai_report = "AI 分析服务器忙，请稍后手动重试。建议关注当前关键点位支撑情况。"
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        if response.status_code == 200:
+            ai_report = response.json()['candidates'][0]['content']['parts'][0]['text']
+        else:
+            ai_report = f"AI 分析返回异常 (状态码 {response.status_code})。请检查 Secrets 中的 Key 是否正确。"
+    except Exception as e:
+        ai_report = f"网络请求失败: {str(e)}"
 
-    # 3. 推送微信
+    # 推送
     requests.post("http://www.pushplus.plus/send", json={
         "token": push_token,
-        "title": "🌍 全球财经 & 股票深度复盘 (复活版)",
-        "content": f"{market_data}\n\n🔍 【AI 专家解读】\n{ai_report}"
+        "title": "🚀 A股 & 全球深度策略 (AI实盘)",
+        "content": f"{market_data}\n\n🧠 【AI 操盘手分析】\n{ai_report}"
     })
-    print("推送完成，脚本正常关闭。")
+    print("任务完成。")
     sys.exit(0)
 
 if __name__ == "__main__":
