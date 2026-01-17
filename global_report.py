@@ -3,7 +3,7 @@ import os
 import requests
 import sys
 
-# 1. 自选股名单
+# 1. 您的自选监控名单
 MARKETS = {
     "纳斯达克": "^IXIC", "上证指数": "000001.SS",
     "特变电工": "600089.SS", "中国核电": "601985.SS",
@@ -24,7 +24,7 @@ def get_market_data():
     return summary
 
 def main():
-    # 这一步会自动去读您刚才在 Secrets 里更新的那个新 Key (AIzaSyAY3Um...)
+    # 读取您刚才已经更新好的 新 Key，不用动 Secrets
     api_key = os.getenv("GEMINI_API_KEY") 
     push_token = os.getenv("PUSHPLUS_TOKEN")
     
@@ -34,9 +34,12 @@ def main():
 
     market_data = get_market_data()
     
-    # ✅ 修正点：改回 'gemini-1.5-flash'
-    # 因为您的新 Key 是在新项目里创建的，新项目必须用这个新模型！
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    # -------------------------------------------------------
+    # 🔄 核心修正：改回 'gemini-pro'
+    # 之前的 404 是因为 Flash 模型在新号上没激活
+    # Pro 模型是 Google 的“基石”，新号默认一定有权限！
+    # -------------------------------------------------------
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
     
     headers = {'Content-Type': 'application/json'}
     payload = {
@@ -61,7 +64,6 @@ def main():
         if response.status_code == 200:
             ai_report = response.json()['candidates'][0]['content']['parts'][0]['text']
         else:
-            # 如果万一还有问题，打印出完整的报错信息
             ai_report = f"⚠️ AI 分析异常 (状态码 {response.status_code})。错误信息: {response.text}"
     except Exception as e:
         ai_report = f"网络请求失败: {str(e)}"
