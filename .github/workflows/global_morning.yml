@@ -2,30 +2,35 @@ name: A股全球双核分析
 
 on:
   schedule:
-    - cron: '0 1 * * 1-5'  # 北京时间 09:00 (UTC 01:00)
-  workflow_dispatch:      # 允许手动运行
+    # ⏰ UTC 01:00 = 北京时间 09:00（周一至周五）
+    - cron: '0 1 * * 1-5'
+  workflow_dispatch:   # 允许手动触发
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
+    env:
+      TZ: Asia/Shanghai   # 明确时区，让日志显示北京时间
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v2
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v2
-      with:
-        python-version: '3.11'  # 👈 核心修改：升级到了 3.11，完美兼容新版库
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'  # ⚠️ 必须 3.11+ 以兼容 yfinance
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install yfinance requests
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install yfinance requests
 
-    - name: Run Analysis
-      env: 
-        DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
-      run: python global_report.py
+      # 👇 您刚才断在这里了，下面是补全的部分
+      - name: Run Global Market Analysis
+        env: 
+          # 🔑 把 Secrets 里的钥匙传给 Python 脚本
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+        run: python global_report.py
