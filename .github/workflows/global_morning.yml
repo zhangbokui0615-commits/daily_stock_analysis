@@ -2,32 +2,25 @@ name: A股全球双核分析推送
 
 on:
   schedule:
-    # ⏰ 北京时间每天早上 09:00 运行 (对应 UTC 01:00)
-    - cron: '0 1 * * 1-5'
-  workflow_dispatch:   # 允许您在 GitHub 网页上手动点击运行进行测试
+    - cron: '0 1 * * 1-5' # 北京时间周一至周五 09:00
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
-
-      - name: 设置 Python 环境
+      - name: 设置 Python 3.10
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-
-      - name: 安装依赖库 (修复 ModuleNotFoundError)
+      - name: 安装依赖库 (加固版)
         run: |
           python -m pip install --upgrade pip
-          # 💡 这里一次性安装所有运行 global_report.py 必须的插件
           pip install akshare yfinance pandas requests pytz
-
-      - name: 运行全球双核分析脚本
-        env: 
-          # 🔑 请确保在仓库 Settings -> Secrets 中已配置以下两个变量
+      - name: 运行脚本
+        env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
         run: python global_report.py
