@@ -24,6 +24,7 @@ def get_market_data():
     return summary
 
 def main():
+    # 这一步会自动去读您刚才在 Secrets 里更新的那个新 Key (AIzaSyAY3Um...)
     api_key = os.getenv("GEMINI_API_KEY") 
     push_token = os.getenv("PUSHPLUS_TOKEN")
     
@@ -33,8 +34,9 @@ def main():
 
     market_data = get_market_data()
     
-    # ✅ 核心修改：将模型改为 'gemini-pro' (最稳定的版本，解决 404)
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
+    # ✅ 修正点：改回 'gemini-1.5-flash'
+    # 因为您的新 Key 是在新项目里创建的，新项目必须用这个新模型！
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     
     headers = {'Content-Type': 'application/json'}
     payload = {
@@ -59,9 +61,8 @@ def main():
         if response.status_code == 200:
             ai_report = response.json()['candidates'][0]['content']['parts'][0]['text']
         else:
-            # 如果这里还报错，我们会把具体的错误发给您
-            error_details = response.text
-            ai_report = f"⚠️ AI 分析异常 (状态码 {response.status_code})。\n错误详情: {error_details[:100]}"
+            # 如果万一还有问题，打印出完整的报错信息
+            ai_report = f"⚠️ AI 分析异常 (状态码 {response.status_code})。错误信息: {response.text}"
     except Exception as e:
         ai_report = f"网络请求失败: {str(e)}"
 
